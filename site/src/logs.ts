@@ -19,7 +19,7 @@ export interface ParseResult {
   rejected: number;
 }
 
-const timestampKeys = ['timestamp', 'time', 'ts', '@timestamp', 'datetime'];
+const timestampKeys = ['timestamp', 'time', 'ts', '@timestamp', 'datetime', 'createdAt'];
 const levelKeys = ['level', 'severity', 'log_level', 'logLevel'];
 const serviceKeys = ['service', 'service_name', 'app', 'application', 'component', 'logger'];
 const messageKeys = ['message', 'msg', 'event', 'description'];
@@ -36,6 +36,17 @@ function valueFor(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
     if (value !== undefined && value !== null && value !== '') return value;
+  }
+}
+
+function nestedValueFor(record: Record<string, unknown>, keys: string[]): unknown {
+  const direct = valueFor(record, keys);
+  if (direct !== undefined) return direct;
+  for (const value of Object.values(record)) {
+    if (isRecord(value)) {
+      const nested = nestedValueFor(value, keys);
+      if (nested !== undefined) return nested;
+    }
   }
 }
 
@@ -58,17 +69,26 @@ function parseTimestamp(value: unknown) {
 }
 
 function normalizeRecord(record: Record<string, unknown>, line: number): LogEvent {
-  const timestampValue = valueFor(record, timestampKeys);
+  const entries = Object.entries(record);
+  const wrapped =
+    entries.length === 1 && isRecord(entries[0][1])
+      ? ([entries[0][0], entries[0][1]] as const)
+      : null;
+  const content = wrapped ? wrapped[1] : record;
+  const timestampValue = nestedValueFor(record, timestampKeys);
   const timestamp = parseTimestamp(timestampValue);
-  const correlationValue = valueFor(record, correlationKeys);
+  const correlationValue =
+    nestedValueFor(record, correlationKeys) ??
+    (wrapped ? valueFor(content, [`${wrapped[0]}Id`, 'id']) : valueFor(record, ['id']));
+  const name = textFor(content, ['name', 'title'], '');
   return {
     id: `${line}-${JSON.stringify(record).slice(0, 48)}`,
     line,
     timestamp,
     timestampLabel: timestamp ? timestamp.toISOString() : 'time unknown',
-    level: normalizeLevel(valueFor(record, levelKeys)),
-    service: textFor(record, serviceKeys, 'unknown service'),
-    message: textFor(record, messageKeys, 'Structured event'),
+    level: normalizeLevel(nestedValueFor(record, levelKeys)),
+    service: textFor(record, serviceKeys, wrapped?.[0] ?? 'unknown service'),
+    message: textFor(record, messageKeys, name || (wrapped ? `Structured ${wrapped[0]}` : 'Structured event')),
     correlation:
       typeof correlationValue === 'string' || typeof correlationValue === 'number'
         ? String(correlationValue)
@@ -85,17 +105,18 @@ export function parseLogs(source: string): ParseResult {
   const trimmed = source.trim();
   if (!trimmed) return { events: [], rejected: 0 };
 
-  if (trimmed.startsWith('[')) {
-    try {
-      const values: unknown = JSON.parse(trimmed);
-      if (!Array.isArray(values)) return { events: [], rejected: 1 };
+  try {
+    const value: unknown = JSON.parse(trimmed);
+    if (isRecord(value)) return { events: [normalizeRecord(value, 1)], rejected: 0 };
+    if (Array.isArray(value)) {
+      const values = value;
       const events = values
         .map((value, index) => (isRecord(value) ? normalizeRecord(value, index + 1) : null))
         .filter((event): event is LogEvent => event !== null);
       return { events, rejected: values.length - events.length };
-    } catch {
-      return { events: [], rejected: 1 };
     }
+    return { events: [], rejected: 1 };
+  } catch {
   }
 
   let rejected = 0;
