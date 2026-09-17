@@ -171,10 +171,20 @@ function textEvent(source: string, line: number): LogEvent {
     message = text;
   }
 
+  const stackFrame = text.match(/^\s*at\s+([\w.]+)/);
+  const standaloneException = text.match(/^([\w.]+(?:Error|Exception)):\s*(.*)$/);
   const nest = text.match(
     /^\[Nest\]\s+\d+\s+-\s+(.+?)\s+(LOG|ERROR|WARN|DEBUG|VERBOSE)\s+\[([^\]]+)\]\s*(?:\[([^\]]+)\]\s*)?(.*?)(?:\s+\+\d+ms)?$/i,
   );
-  if (nest) {
+  if (stackFrame) {
+    level = 'error';
+    service = service === 'unknown service' ? stackFrame[1].split('.')[0] : service;
+    message = text.trim();
+  } else if (standaloneException) {
+    level = 'error';
+    service = service === 'unknown service' ? 'runtime' : service;
+    message = `${standaloneException[1]}: ${standaloneException[2]}`;
+  } else if (nest) {
     timestamp = timestampFor(nest[1]);
     level = normalizeLevel(nest[2]);
     service = service === 'unknown service' ? nest[3] : service;
