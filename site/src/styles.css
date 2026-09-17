@@ -1,43 +1,61 @@
 :root {
-  color-scheme: light;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #20211f;
-  background: #efede7;
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #16161a;
+  background: #f7f6f3;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --paper: #efede7;
-  --surface: #f7f5f0;
-  --surface-strong: #fffefa;
-  --ink: #20211f;
-  --muted: #6e706b;
-  --faint: #9b9d97;
-  --line: #cfcec7;
-  --line-soft: #deddd6;
-  --accent: #59665a;
-  --accent-soft: #dfe5dc;
-  --selection: #e8e6df;
+  --paper: #f7f6f3;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --ink: #16161a;
+  --muted: #6b6b74;
+  --faint: #96969f;
+  --line: #ddd9d2;
+  --line-soft: #ebe7e0;
+  --accent: #16161a;
+  --accent-soft: #ebe7e0;
+  --selection: #ebe7e0;
   --danger: #a84437;
   --warn: #a36a21;
   --info: #526a75;
-  --shadow: 0 28px 70px rgb(40 40 34 / 10%);
+  --shadow: 0 24px 64px rgb(22 22 26 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --paper: #0c0c0e;
+    --surface: #131316;
+    --surface-strong: #131316;
+    --ink: #e8e8ea;
+    --muted: #8b8b95;
+    --faint: #6a6a74;
+    --line: #26262c;
+    --line-soft: #1c1c21;
+    --accent: #e8e8ea;
+    --accent-soft: #1c1c21;
+    --selection: #1c1c21;
+    --danger: #e17a6d;
+    --warn: #d7a54a;
+    --info: #87a7b4;
+    --shadow: 0 24px 64px rgb(0 0 0 / 24%);
+  }
 }
 
 :root[data-theme='dark'] {
-  color-scheme: dark;
-  --paper: #171816;
-  --surface: #1e201d;
-  --surface-strong: #252724;
-  --ink: #e8e7e1;
-  --muted: #a3a59f;
-  --faint: #73756f;
-  --line: #3d403a;
-  --line-soft: #30322e;
-  --accent: #9baa99;
-  --accent-soft: #30382f;
-  --selection: #292c28;
+  --paper: #0c0c0e;
+  --surface: #131316;
+  --surface-strong: #131316;
+  --ink: #e8e8ea;
+  --muted: #8b8b95;
+  --faint: #6a6a74;
+  --line: #26262c;
+  --line-soft: #1c1c21;
+  --accent: #e8e8ea;
+  --accent-soft: #1c1c21;
+  --selection: #1c1c21;
   --danger: #e17a6d;
-  --warn: #d7a158;
+  --warn: #d7a54a;
   --info: #87a7b4;
   --shadow: 0 28px 70px rgb(0 0 0 / 24%);
 }
@@ -54,9 +72,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background:
-    linear-gradient(90deg, transparent 49.95%, color-mix(in srgb, var(--line-soft) 32%, transparent) 50%, transparent 50.05%),
-    var(--paper);
+  background: var(--paper);
   color: var(--ink);
 }
 
@@ -184,12 +200,17 @@ kbd {
 }
 
 .icon-button {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
+  border: 0;
   background: transparent;
+  padding: 0;
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
   cursor: pointer;
+}
+
+.icon-button:hover {
+  color: var(--ink);
 }
 
 .welcome {
@@ -212,11 +233,10 @@ kbd {
 .welcome h1 {
   max-width: 670px;
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(54px, 6.2vw, 92px);
-  font-weight: 400;
-  letter-spacing: -0.065em;
-  line-height: 0.92;
+  font-size: clamp(45px, 5.2vw, 72px);
+  font-weight: 640;
+  letter-spacing: -0.05em;
+  line-height: 0.98;
 }
 
 .lede {
@@ -498,10 +518,9 @@ kbd {
 
 .board-header h1 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
   font-size: 36px;
-  font-weight: 400;
-  letter-spacing: -0.045em;
+  font-weight: 640;
+  letter-spacing: -0.036em;
 }
 
 .search-wrap {
@@ -802,10 +821,9 @@ kbd {
 
 .dialog-heading h2 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
   font-size: 31px;
-  font-weight: 400;
-  letter-spacing: -0.04em;
+  font-weight: 640;
+  letter-spacing: -0.036em;
 }
 
 .dialog-heading > button {

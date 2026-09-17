@@ -21,7 +21,16 @@ export interface ParseResult {
 
 const timestampKeys = ['timestamp', 'time', 'ts', '@timestamp', 'datetime', 'createdAt'];
 const levelKeys = ['level', 'severity', 'log_level', 'logLevel'];
-const serviceKeys = ['service', 'service_name', 'app', 'application', 'component', 'logger'];
+const serviceKeys = [
+  'service',
+  'service_name',
+  'app',
+  'application',
+  'component',
+  'logger',
+  'module',
+  'caller',
+];
 const messageKeys = ['message', 'msg', 'event', 'description'];
 const correlationKeys = [
   'correlationId',
@@ -31,6 +40,7 @@ const correlationKeys = [
   'traceId',
   'trace_id',
 ];
+const recordCollectionKeys = ['events', 'logs', 'records', 'logEvents', 'items'];
 
 function valueFor(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
@@ -58,7 +68,10 @@ function textFor(record: Record<string, unknown>, keys: string[], fallback: stri
 function normalizeLevel(value: unknown): LogLevel {
   const normalized = String(value ?? 'unknown').toLowerCase();
   if (normalized === 'warning') return 'warn';
-  if (normalized === 'critical') return 'fatal';
+  if (['critical', 'panic', 'emerg', 'alert'].includes(normalized)) return 'fatal';
+  if (['err', 'severe'].includes(normalized)) return 'error';
+  if (['log', 'notice', 'stdout'].includes(normalized)) return 'info';
+  if (normalized === 'stderr') return 'error';
   return levels.includes(normalized as LogLevel) ? (normalized as LogLevel) : 'unknown';
 }
 
@@ -101,149 +114,214 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function correlationFor(message: string) {
+  const labeled = message.match(
+    /\b(?:correlation|request|trace)[_-]?id\b\s*[=:]\s*["']?([\w:./-]+)/i,
+  );
+  if (labeled) return labeled[1];
+  const context = message.match(/\[[\w-]+\]\[([\w:./-]{6,})\]/);
+  return context?.[1] ?? null;
+}
+
+function timestampFor(value: string) {
+  const date = new Date(value.replace(/(\d{2}),(\d{3})/, '$1.$2'));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function textEvent(source: string, line: number): LogEvent {
+  const original = source
+    .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g'), '')
+    .trimEnd();
+  let text = original;
+  let service = 'unknown service';
+  let timestamp: Date | null = null;
+  let level: LogLevel = 'unknown';
+  let message = text;
+
+  const container = text.match(/^([\w][\w.-]*)\s+\|\s?(.*)$/);
+  if (container) {
+    service = container[1];
+    text = container[2];
+    message = text;
+  }
+
+  const cri = text.match(/^(\d{4}-\d\d-\d\dT\S+)\s+(stdout|stderr)\s+[FP]\s+(.*)$/i);
+  if (cri) {
+    timestamp = timestampFor(cri[1]);
+    level = normalizeLevel(cri[2]);
+    text = cri[3];
+    message = text;
+  }
+
+  const nest = text.match(
+    /^\[Nest\]\s+\d+\s+-\s+(.+?)\s+(LOG|ERROR|WARN|DEBUG|VERBOSE)\s+\[([^\]]+)\](?:\[([^\]]+)\])?\s*(.*?)(?:\s+\+\d+ms)?$/i,
+  );
+  if (nest) {
+    timestamp = timestampFor(nest[1]);
+    level = normalizeLevel(nest[2]);
+    service = service === 'unknown service' ? nest[3] : service;
+    message = nest[5];
+  } else {
+    const python = text.match(
+      /^(\d{4}-\d\d-\d\d[ T][\d:.,+-]+)\s+-\s+\[?(TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\]?\s+-\s+(?:\[[^\]]+\]\s+-\s+){0,2}([^\s]+)\s+-\s+(.*)$/i,
+    );
+    const pythonStandard = text.match(
+      /^(\d{4}-\d\d-\d\d[ T][\d:.,+-]+)\s+-\s+([^\s]+)\s+-\s+(TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\s+-\s+(.*)$/i,
+    );
+    const pythonIso = text.match(
+      /^(\d{4}-\d\d-\d\dT[\d:.,+-]+Z?)\s+(TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\s+-\s+([^\s]+)\s+-\s+(.*)$/i,
+    );
+    const celery = text.match(/^\[([^\]]+):\s+(\w+)\/[^\]]+\]\s+(.*)$/);
+    const gunicorn = text.match(/^\[([^\]]+)\]\s+\[\d+\]\s+\[(\w+)\]\s+(.*)$/);
+    const postgres = text.match(
+      /^(\d{4}-\d\d-\d\d[ T][\d:.+-]+(?:\s+\w+)?)\s+\[\d+\](?:\s+[\w.-]+@[\w.-]+)?\s+(\w+):\s+(.*)$/,
+    );
+    const bracketed = text.match(
+      /^\[([^\]]+)\]\s+\[(TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\]\s+\[([^\]]+)\]\s+(.*)$/i,
+    );
+    const iso = text.match(
+      /^(\d{4}-\d\d-\d\d[T ][\d:.+-]+Z?)\s+(TRACE|DEBUG|INFO|NOTICE|WARNING|WARN|ERROR|CRITICAL|FATAL)\s+([^:]+):\s+(.*)$/i,
+    );
+    const redis = text.match(
+      /^\d+:[A-Z]\s+(\d{1,2}\s+\w+\s+\d{4}\s+[\d:.]+)\s+([#*.-])\s+(.*)$/,
+    );
+
+    if (python) {
+      timestamp = timestampFor(python[1]);
+      level = normalizeLevel(python[2]);
+      service = service === 'unknown service' ? python[3] : service;
+      message = python[4];
+    } else if (pythonStandard) {
+      timestamp = timestampFor(pythonStandard[1]);
+      service = service === 'unknown service' ? pythonStandard[2] : service;
+      level = normalizeLevel(pythonStandard[3]);
+      message = pythonStandard[4];
+    } else if (pythonIso) {
+      timestamp = timestampFor(pythonIso[1]);
+      level = normalizeLevel(pythonIso[2]);
+      service = service === 'unknown service' ? pythonIso[3] : service;
+      message = pythonIso[4];
+    } else if (celery || gunicorn) {
+      const match = celery ?? gunicorn!;
+      timestamp = timestampFor(match[1]);
+      level = normalizeLevel(match[2]);
+      service = service === 'unknown service' ? (celery ? 'worker' : 'web') : service;
+      message = match[3];
+    } else if (postgres) {
+      timestamp = timestampFor(postgres[1]);
+      level = normalizeLevel(postgres[2]);
+      service = service === 'unknown service' ? 'postgres' : service;
+      message = postgres[3];
+    } else if (bracketed) {
+      timestamp = timestampFor(bracketed[1]);
+      level = normalizeLevel(bracketed[2]);
+      service = service === 'unknown service' ? bracketed[3] : service;
+      message = bracketed[4];
+    } else if (iso) {
+      timestamp = timestampFor(iso[1]);
+      level = normalizeLevel(iso[2]);
+      service = service === 'unknown service' ? iso[3].trim() : service;
+      message = iso[4];
+    } else if (redis) {
+      timestamp = timestampFor(redis[1]);
+      level = redis[2] === '#' ? 'warn' : redis[2] === '-' ? 'debug' : 'info';
+      service = service === 'unknown service' ? 'redis' : service;
+      message = redis[3];
+    }
+  }
+
+  const correlation = correlationFor(text);
+  return {
+    id: `${line}-${original.slice(0, 48)}`,
+    line,
+    timestamp,
+    timestampLabel: timestamp ? timestamp.toISOString() : 'time unknown',
+    level,
+    service,
+    message: message || 'Log event',
+    correlation,
+    raw: { original },
+  };
+}
+
+function normalizeValues(values: unknown[]) {
+  const events = values
+    .map((value, index) => (isRecord(value) ? normalizeRecord(value, index + 1) : null))
+    .filter((event): event is LogEvent => event !== null);
+  return {
+    events: events.every((event) => event.timestamp)
+      ? events.sort((a, b) => a.timestamp!.getTime() - b.timestamp!.getTime())
+      : events,
+    rejected: values.length - events.length,
+  };
+}
+
 export function parseLogs(source: string): ParseResult {
   const trimmed = source.trim();
   if (!trimmed) return { events: [], rejected: 0 };
 
   try {
     const value: unknown = JSON.parse(trimmed);
-    if (isRecord(value)) return { events: [normalizeRecord(value, 1)], rejected: 0 };
-    if (Array.isArray(value)) {
-      const values = value;
-      const events = values
-        .map((value, index) => (isRecord(value) ? normalizeRecord(value, index + 1) : null))
-        .filter((event): event is LogEvent => event !== null);
-      return { events, rejected: values.length - events.length };
+    if (isRecord(value)) {
+      for (const key of recordCollectionKeys) {
+        if (Array.isArray(value[key])) return normalizeValues(value[key]);
+      }
+      return { events: [normalizeRecord(value, 1)], rejected: 0 };
     }
+    if (Array.isArray(value)) return normalizeValues(value);
     return { events: [], rejected: 1 };
   } catch {
   }
 
-  let rejected = 0;
-  const events = trimmed
-    .split(/\r?\n/)
-    .map((line, index) => {
-      if (!line.trim()) return null;
-      try {
-        const value: unknown = JSON.parse(line);
-        if (!isRecord(value)) {
-          rejected += 1;
-          return null;
-        }
-        return normalizeRecord(value, index + 1);
-      } catch {
-        rejected += 1;
-        return null;
-      }
-    })
-    .filter((event): event is LogEvent => event !== null)
-    .sort((a, b) => (a.timestamp?.getTime() ?? a.line) - (b.timestamp?.getTime() ?? b.line));
+  const events: LogEvent[] = [];
+  for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    const content = line.replace(/^[\w][\w.-]*\s+\|\s?/, '');
+    const previous = events.at(-1);
+    const previousOriginal = previous?.raw.original;
+    if (
+      previous &&
+      typeof previousOriginal === 'string' &&
+      (/^\s+/.test(content) ||
+        /^(Traceback \(most recent call last\):|Caused by:|During handling|DETAIL:|HINT:|CONTEXT:|STATEMENT:)/.test(
+          content,
+        ) ||
+        (previousOriginal.includes('Traceback (most recent call last):') &&
+          /^[\w.]+(?:Error|Exception):/.test(content)))
+    ) {
+      previous.raw = { original: `${previousOriginal}\n${line}` };
+      continue;
+    }
+    try {
+      const value: unknown = JSON.parse(line);
+      events.push(isRecord(value) ? normalizeRecord(value, index + 1) : textEvent(line, index + 1));
+    } catch {
+      events.push(textEvent(line, index + 1));
+    }
+  }
 
-  return { events, rejected };
+  return {
+    events: events.every((event) => event.timestamp)
+      ? events.sort((a, b) => a.timestamp!.getTime() - b.timestamp!.getTime())
+      : events,
+    rejected: 0,
+  };
 }
 
 export const sampleLogs = [
-  {
-    timestamp: '2026-09-17T09:42:11.104Z',
+  'api-1 | [Nest] 24 - 09/17/2026, 09:42:11 AM LOG [RequestHandler][req-a72f] Request accepted +2ms',
+  'worker-1 | 2026-09-17 09:42:11,132 - [INFO] - [12] - [MainThread] - jobs.index - Processing started requestId=req-a72f',
+  JSON.stringify({
+    timestamp: '2026-09-17T06:42:11.208Z',
     level: 'info',
-    service: 'gateway',
-    message: 'Checkout request accepted',
-    correlationId: 'req-a72f',
-    method: 'POST',
-    path: '/checkout',
-    duration_ms: 18,
-  },
-  {
-    timestamp: '2026-09-17T09:42:11.132Z',
-    level: 'debug',
-    service: 'catalog',
-    message: 'Inventory reservation started',
-    correlationId: 'req-a72f',
-    sku_count: 3,
-  },
-  {
-    timestamp: '2026-09-17T09:42:11.189Z',
-    level: 'info',
-    service: 'catalog',
-    message: 'Inventory reserved',
-    correlationId: 'req-a72f',
-    duration_ms: 57,
-  },
-  {
-    timestamp: '2026-09-17T09:42:11.208Z',
-    level: 'info',
-    service: 'payments',
-    message: 'Authorization requested',
-    correlationId: 'req-a72f',
-    provider: 'northstar',
-  },
-  {
-    timestamp: '2026-09-17T09:42:11.461Z',
-    level: 'warn',
-    service: 'payments',
-    message: 'Provider response exceeded target latency',
-    correlationId: 'req-a72f',
-    duration_ms: 253,
-    target_ms: 200,
-  },
-  {
-    timestamp: '2026-09-17T09:42:11.486Z',
-    level: 'info',
-    service: 'payments',
-    message: 'Payment authorized',
-    correlationId: 'req-a72f',
-    amount: 184.5,
-    currency: 'USD',
-  },
-  {
-    timestamp: '2026-09-17T09:42:11.522Z',
-    level: 'info',
-    service: 'orders',
-    message: 'Order committed',
-    correlationId: 'req-a72f',
-    order_id: 'ord-9014',
-  },
-  {
-    timestamp: '2026-09-17T09:42:13.018Z',
-    level: 'info',
-    service: 'gateway',
-    message: 'Checkout request accepted',
-    correlationId: 'req-b19c',
-    method: 'POST',
-    path: '/checkout',
-  },
-  {
-    timestamp: '2026-09-17T09:42:13.081Z',
-    level: 'error',
-    service: 'catalog',
-    message: 'Inventory reservation rejected',
-    correlationId: 'req-b19c',
-    sku: 'INK-04',
-    available: 0,
-  },
-  {
-    timestamp: '2026-09-17T09:42:13.096Z',
-    level: 'warn',
-    service: 'gateway',
-    message: 'Checkout completed with conflict',
-    correlationId: 'req-b19c',
-    status: 409,
-    duration_ms: 78,
-  },
-  {
-    timestamp: '2026-09-17T09:42:15.400Z',
-    level: 'debug',
-    service: 'worker',
-    message: 'Notification batch acquired',
-    correlationId: 'job-digest-88',
-    batch_size: 42,
-  },
-  {
-    timestamp: '2026-09-17T09:42:15.782Z',
-    level: 'fatal',
-    service: 'worker',
-    message: 'Notification worker lost database connection',
-    correlationId: 'job-digest-88',
-    retry_in_ms: 5000,
-  },
-].map((entry) => JSON.stringify(entry)).join('\n');
+    service: 'search',
+    message: 'Query completed',
+    traceId: 'req-a72f',
+    duration_ms: 76,
+  }),
+  'vector-1 | 2026-09-17T06:42:11.301Z INFO storage: persisted 24 vectors trace_id=req-a72f',
+  'postgres-1 | 2026-09-17 06:42:11.461 UTC [74] WARNING: checkpoint exceeded target duration',
+  'api-1 | [Nest] 24 - 09/17/2026, 09:42:11 AM ERROR [RequestHandler][req-b19c] Request failed +18ms',
+  '[2026-09-17 09:42:11 +0300] [31] [ERROR] Worker exited unexpectedly request_id=req-b19c',
+  'redis-1 | 1:M 17 Sep 2026 09:42:15.782 * Ready to accept connections',
+].join('\n');

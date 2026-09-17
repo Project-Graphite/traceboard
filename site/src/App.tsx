@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { levels, parseLogs, sampleLogs, type LogEvent, type LogLevel } from './logs';
 
 const activeLevels = [...levels];
+type Theme = 'system' | 'light' | 'dark';
 
 function formatTime(event: LogEvent) {
   if (!event.timestamp) return `line ${event.line}`;
@@ -18,6 +19,12 @@ function formatSpan(milliseconds: number) {
   if (milliseconds < 1000) return `${milliseconds} ms`;
   if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(1)} s`;
   return `${(milliseconds / 60_000).toFixed(1)} min`;
+}
+
+function formatRaw(event: LogEvent) {
+  return typeof event.raw.original === 'string' && Object.keys(event.raw).length === 1
+    ? event.raw.original
+    : JSON.stringify(event.raw, null, 2);
 }
 
 function buildTimeline(events: LogEvent[], buckets = 28) {
@@ -47,7 +54,10 @@ function App() {
   const [enabledLevels, setEnabledLevels] = useState<LogLevel[]>([...activeLevels]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('traceboard-theme') ?? 'light');
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = localStorage.getItem('traceboard-theme');
+    return saved === 'light' || saved === 'dark' ? saved : 'system';
+  });
   const searchRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const parsed = useMemo(() => parseLogs(source), [source]);
@@ -75,8 +85,14 @@ function App() {
   const selected = filtered.find((event) => event.id === selectedId) ?? filtered[0] ?? null;
   const timeline = useMemo(() => buildTimeline(filtered), [filtered]);
   const timelineMaximum = Math.max(1, ...timeline.map((bucket) => bucket.total));
-  const firstTimestamp = parsed.events.find((event) => event.timestamp)?.timestamp;
-  const lastTimestamp = [...parsed.events].reverse().find((event) => event.timestamp)?.timestamp;
+  const [firstTimestamp, lastTimestamp] = useMemo(() => {
+    const timestamps = parsed.events.flatMap((event) =>
+      event.timestamp ? [event.timestamp.getTime()] : [],
+    );
+    return timestamps.length
+      ? [new Date(Math.min(...timestamps)), new Date(Math.max(...timestamps))]
+      : [undefined, undefined];
+  }, [parsed.events]);
   const span = firstTimestamp && lastTimestamp ? lastTimestamp.getTime() - firstTimestamp.getTime() : 0;
 
   useEffect(() => {
@@ -84,6 +100,11 @@ function App() {
   }, [source]);
 
   useEffect(() => {
+    if (theme === 'system') {
+      document.documentElement.removeAttribute('data-theme');
+      localStorage.removeItem('traceboard-theme');
+      return;
+    }
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('traceboard-theme', theme);
   }, [theme]);
@@ -140,10 +161,14 @@ function App() {
           <button
             className="icon-button"
             type="button"
-            onClick={() => setTheme((current) => (current === 'light' ? 'dark' : 'light'))}
-            aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} theme`}
+            onClick={() =>
+              setTheme((current) =>
+                current === 'system' ? 'light' : current === 'light' ? 'dark' : 'system',
+              )
+            }
+            aria-label={`Theme is ${theme}. Change theme.`}
           >
-            {theme === 'light' ? '◐' : '◑'}
+            {theme}
           </button>
         </div>
       </header>
@@ -151,11 +176,12 @@ function App() {
       {parsed.events.length === 0 ? (
         <main className="welcome">
           <section className="welcome-copy">
-            <p className="eyebrow">structured logs / without the noise</p>
+            <p className="eyebrow">local incident workspace</p>
             <h1>Find the event that changed everything.</h1>
             <p className="lede">
-              Traceboard turns raw JSON logs into a quiet, inspectable timeline. Filter a service,
-              follow a request, and keep every byte on your machine.
+              Traceboard brings application, worker, container, and database logs into one
+              inspectable timeline. Filter a service, follow a request, and keep every byte on your
+              machine.
             </p>
             <div className="welcome-actions">
               <button className="primary-button" type="button" onClick={() => setImportOpen(true)}>
@@ -166,7 +192,7 @@ function App() {
               </button>
             </div>
             {source && parsed.rejected > 0 && (
-              <p className="parse-error">No structured events found. Check the JSON or JSONL input.</p>
+              <p className="parse-error">No events found in this input.</p>
             )}
           </section>
           <section className="welcome-preview" aria-label="Traceboard preview">
@@ -175,10 +201,10 @@ function App() {
               <span>7 events</span>
             </div>
             {[
-              ['09:42:11.104', 'gateway', 'Checkout request accepted', 'info'],
-              ['09:42:11.189', 'catalog', 'Inventory reserved', 'info'],
-              ['09:42:11.461', 'payments', 'Provider response exceeded target', 'warn'],
-              ['09:42:11.522', 'orders', 'Order committed', 'info'],
+              ['09:42:11.104', 'api', 'Request accepted', 'info'],
+              ['09:42:11.189', 'worker', 'Processing started', 'info'],
+              ['09:42:11.461', 'postgres', 'Checkpoint exceeded target', 'warn'],
+              ['09:42:11.522', 'api', 'Request completed', 'info'],
             ].map(([time, sourceName, message, level]) => (
               <div className="preview-event" key={time}>
                 <span className={`level-dot level-${level}`} />
@@ -391,12 +417,12 @@ function App() {
                       <span>raw event</span>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard.writeText(JSON.stringify(selected.raw, null, 2))}
+                        onClick={() => navigator.clipboard.writeText(formatRaw(selected))}
                       >
                         copy
                       </button>
                     </div>
-                    <pre>{JSON.stringify(selected.raw, null, 2)}</pre>
+                    <pre>{formatRaw(selected)}</pre>
                   </>
                 ) : (
                   <p className="inspector-empty">Select an event to inspect every field.</p>
@@ -436,13 +462,13 @@ function App() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".json,.jsonl,.ndjson,application/json"
+                accept=".json,.jsonl,.ndjson,.log,.txt,application/json,text/plain"
                 onChange={(event) => importFile(event.target.files?.[0])}
               />
-              <strong>Choose a JSON or JSONL file</strong>
+              <strong>Choose a log, text, JSON, or JSONL file</strong>
               <span>Files are read locally and never uploaded.</span>
             </label>
-            <div className="dialog-divider"><span>or paste structured logs</span></div>
+            <div className="dialog-divider"><span>or paste log output</span></div>
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -451,7 +477,7 @@ function App() {
               autoFocus
             />
             <div className="dialog-footer">
-              <span>JSON arrays and newline-delimited JSON are supported.</span>
+              <span>Plain text, container output, JSON arrays, and JSONL are supported.</span>
               <button
                 className="primary-button"
                 type="button"
