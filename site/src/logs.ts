@@ -119,19 +119,37 @@ function correlationFor(message: string) {
     /\b(?:correlation|request|trace)[_-]?id\b\s*[=:]\s*["']?([\w:./-]+)/i,
   );
   if (labeled) return labeled[1];
-  const context = message.match(/\[[\w-]+\]\[([\w:./-]{6,})\]/);
+  const entity = message.match(
+    /\b(report|job|document|task)\s+(?:id\s*[=:]?\s*)?#?((?=[\w-]*\d)[\w-]+)/i,
+  );
+  if (entity) return `${entity[1].toLowerCase()}:${entity[2]}`;
+  const context = message.match(/\[[\w-]+\]\s*\[([\w:./-]{6,})\]/);
   return context?.[1] ?? null;
 }
 
 function timestampFor(value: string) {
-  const date = new Date(value.replace(/(\d{2}),(\d{3})/, '$1.$2'));
+  const access = value.match(
+    /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}):([\d:]+)\s+([+-]\d{4})$/,
+  );
+  const date = new Date(
+    access
+      ? `${access[1]} ${access[2]} ${access[3]} ${access[4]} GMT${access[5]}`
+      : value.replace(/(\d{2}),(\d{3})/, '$1.$2'),
+  );
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function textEvent(source: string, line: number): LogEvent {
-  const original = source
+function cleanLine(source: string) {
+  return source
     .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g'), '')
+    .replace(/^│\s?/, '')
+    .replace(/\s*│$/, '')
+    .replace(/\[([A-Za-z][\w.-]*)\[\]/g, '[$1]')
     .trimEnd();
+}
+
+function textEvent(source: string, line: number): LogEvent {
+  const original = cleanLine(source);
   let text = original;
   let service = 'unknown service';
   let timestamp: Date | null = null;
@@ -154,7 +172,7 @@ function textEvent(source: string, line: number): LogEvent {
   }
 
   const nest = text.match(
-    /^\[Nest\]\s+\d+\s+-\s+(.+?)\s+(LOG|ERROR|WARN|DEBUG|VERBOSE)\s+\[([^\]]+)\](?:\[([^\]]+)\])?\s*(.*?)(?:\s+\+\d+ms)?$/i,
+    /^\[Nest\]\s+\d+\s+-\s+(.+?)\s+(LOG|ERROR|WARN|DEBUG|VERBOSE)\s+\[([^\]]+)\]\s*(?:\[([^\]]+)\]\s*)?(.*?)(?:\s+\+\d+ms)?$/i,
   );
   if (nest) {
     timestamp = timestampFor(nest[1]);
@@ -171,8 +189,16 @@ function textEvent(source: string, line: number): LogEvent {
     const pythonIso = text.match(
       /^(\d{4}-\d\d-\d\dT[\d:.,+-]+Z?)\s+(TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\s+-\s+([^\s]+)\s+-\s+(.*)$/i,
     );
+    const pythonBracketed = text.match(
+      /^\[([^\]]+)\]\s+(TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\s+-\s+([^\s]+)\s+-\s+(.*)$/i,
+    );
+    const pythonWarning = text.match(/^(.+?\.py):\d+:\s+([\w.]*Warning):\s+(.*)$/);
     const celery = text.match(/^\[([^\]]+):\s+(\w+)\/[^\]]+\]\s+(.*)$/);
     const gunicorn = text.match(/^\[([^\]]+)\]\s+\[\d+\]\s+\[(\w+)\]\s+(.*)$/);
+    const httpAccess = text.match(
+      /^\[([^\]]+)\]\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\S+)\s+=>\s+STATUS\[(\d{3})\]\s+(.*)$/i,
+    );
+    const workerNotice = text.match(/^\[([^\]]+)\]\s+-\s+(worker\s+\d+)\s+(.*)$/i);
     const postgres = text.match(
       /^(\d{4}-\d\d-\d\d[ T][\d:.+-]+(?:\s+\w+)?)\s+\[\d+\](?:\s+[\w.-]+@[\w.-]+)?\s+(\w+):\s+(.*)$/,
     );
@@ -201,12 +227,32 @@ function textEvent(source: string, line: number): LogEvent {
       level = normalizeLevel(pythonIso[2]);
       service = service === 'unknown service' ? pythonIso[3] : service;
       message = pythonIso[4];
+    } else if (pythonBracketed) {
+      timestamp = timestampFor(pythonBracketed[1]);
+      level = normalizeLevel(pythonBracketed[2]);
+      service = service === 'unknown service' ? pythonBracketed[3] : service;
+      message = pythonBracketed[4];
+    } else if (pythonWarning) {
+      level = 'warn';
+      service = service === 'unknown service' ? pythonWarning[1].split('/').at(-1)! : service;
+      message = `${pythonWarning[2]}: ${pythonWarning[3]}`;
     } else if (celery || gunicorn) {
       const match = celery ?? gunicorn!;
       timestamp = timestampFor(match[1]);
       level = normalizeLevel(match[2]);
       service = service === 'unknown service' ? (celery ? 'worker' : 'web') : service;
       message = match[3];
+    } else if (httpAccess) {
+      timestamp = timestampFor(httpAccess[1]);
+      const status = Number(httpAccess[4]);
+      level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+      service = service === 'unknown service' ? 'http' : service;
+      message = `${httpAccess[2].toUpperCase()} ${httpAccess[3]} → ${status} ${httpAccess[5]}`;
+    } else if (workerNotice) {
+      timestamp = timestampFor(workerNotice[1]);
+      level = 'info';
+      service = service === 'unknown service' ? 'worker' : service;
+      message = `${workerNotice[2]} ${workerNotice[3]}`;
     } else if (postgres) {
       timestamp = timestampFor(postgres[1]);
       level = normalizeLevel(postgres[2]);
@@ -230,7 +276,7 @@ function textEvent(source: string, line: number): LogEvent {
     }
   }
 
-  const correlation = correlationFor(text);
+  const correlation = nest?.[4] ?? correlationFor(message);
   return {
     id: `${line}-${original.slice(0, 48)}`,
     line,
@@ -275,28 +321,31 @@ export function parseLogs(source: string): ParseResult {
 
   const events: LogEvent[] = [];
   for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue;
-    const content = line.replace(/^[\w][\w.-]*\s+\|\s?/, '');
+    const cleaned = cleanLine(line);
+    if (!cleaned.trim()) continue;
+    const content = cleaned.replace(/^[\w][\w.-]*\s+\|\s?/, '');
     const previous = events.at(-1);
     const previousOriginal = previous?.raw.original;
     if (
       previous &&
       typeof previousOriginal === 'string' &&
       (/^\s+/.test(content) ||
-        /^(Traceback \(most recent call last\):|Caused by:|During handling|DETAIL:|HINT:|CONTEXT:|STATEMENT:)/.test(
+        /^(Traceback \(most recent call last\):|Caused by:|During handling|DETAIL:|HINT:|CONTEXT:|STATEMENT:|[\w.]+(?:Error|Exception):)/.test(
           content,
         ) ||
         (previousOriginal.includes('Traceback (most recent call last):') &&
           /^[\w.]+(?:Error|Exception):/.test(content)))
     ) {
-      previous.raw = { original: `${previousOriginal}\n${line}` };
+      previous.raw = { original: `${previousOriginal}\n${cleaned}` };
       continue;
     }
     try {
-      const value: unknown = JSON.parse(line);
-      events.push(isRecord(value) ? normalizeRecord(value, index + 1) : textEvent(line, index + 1));
+      const value: unknown = JSON.parse(cleaned);
+      events.push(
+        isRecord(value) ? normalizeRecord(value, index + 1) : textEvent(cleaned, index + 1),
+      );
     } catch {
-      events.push(textEvent(line, index + 1));
+      events.push(textEvent(cleaned, index + 1));
     }
   }
 
