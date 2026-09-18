@@ -1,0 +1,12 @@
+name: Registry
+
+on:
+  push:
+    branches: [main]
+    paths: [.graphite.yml]
+
+jobs:
+  sync:
+    name: Sync registry
+    uses: project-graphite/actions/.github/workflows/reusable-sync-registry.yml@v1
+    secrets: inherit
