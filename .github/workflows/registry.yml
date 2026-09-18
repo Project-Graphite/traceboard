@@ -8,5 +8,5 @@ on:
 jobs:
   sync:
     name: Sync registry
-    uses: project-graphite/actions/.github/workflows/reusable-sync-registry.yml@v1
+    uses: project-graphite/actions/.github/workflows/reusable-sync-registry.yml@main
     secrets: inherit
