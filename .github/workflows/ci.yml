@@ -32,4 +32,4 @@ jobs:
 
   secrets:
     name: Secrets
-    uses: project-graphite/actions/.github/workflows/reusable-gitleaks.yml@v1
+    uses: project-graphite/actions/.github/workflows/reusable-gitleaks.yml@main
