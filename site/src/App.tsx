@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { levels, parseLogs, sampleLogs, type LogEvent, type LogLevel } from './logs';
 
-type Theme = 'system' | 'light' | 'dark';
-
 const timeFormat = new Intl.DateTimeFormat(undefined, {
   hour: '2-digit',
   minute: '2-digit',
@@ -62,10 +60,6 @@ function App() {
   const [enabledLevels, setEnabledLevels] = useState<LogLevel[]>([...levels]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('traceboard-theme');
-    return saved === 'light' || saved === 'dark' ? saved : 'system';
-  });
   const searchRef = useRef<HTMLInputElement>(null);
   const parsed = useMemo(() => parseLogs(source), [source]);
   const services = useMemo(
@@ -118,16 +112,6 @@ function App() {
   }, [source]);
 
   useEffect(() => {
-    if (theme === 'system') {
-      document.documentElement.removeAttribute('data-theme');
-      localStorage.removeItem('traceboard-theme');
-      return;
-    }
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('traceboard-theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
       if (
         event.key === '/' &&
@@ -178,23 +162,9 @@ function App() {
           <span>Traceboard</span>
           <span className="edition">local workspace</span>
         </div>
-        <div className="top-actions">
-          <span className="privacy-status">
-            <span className="privacy-dot" /> Nothing leaves this browser
-          </span>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() =>
-              setTheme((current) =>
-                current === 'system' ? 'light' : current === 'light' ? 'dark' : 'system',
-              )
-            }
-            aria-label={`Theme is ${theme}. Change theme.`}
-          >
-            {theme}
-          </button>
-        </div>
+        <span className="privacy-status">
+          <span className="privacy-dot" /> Nothing leaves this browser
+        </span>
       </header>
 
       {parsed.events.length === 0 ? (
