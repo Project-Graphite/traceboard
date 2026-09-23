@@ -163,7 +163,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className="topbar" inert={importOpen}>
         <div className="wordmark">
           <span className="mark" aria-hidden="true">
             T/
@@ -191,7 +191,7 @@ function App() {
       </header>
 
       {parsed.events.length === 0 ? (
-        <main className="welcome">
+        <main className="welcome" inert={importOpen}>
           <section className="welcome-copy">
             <p className="eyebrow">local incident workspace</p>
             <h1>Find the event that changed everything.</h1>
@@ -233,7 +233,7 @@ function App() {
           </section>
         </main>
       ) : (
-        <main className="workspace">
+        <main className="workspace" inert={importOpen}>
           <aside className="rail">
             <div className="rail-section">
               <p className="rail-label">dataset</p>
@@ -260,6 +260,7 @@ function App() {
                   return (
                     <button
                       className={enabledLevels.includes(level) ? 'active' : ''}
+                      aria-pressed={enabledLevels.includes(level)}
                       type="button"
                       key={level}
                       onClick={() => toggleLevel(level)}
@@ -278,6 +279,7 @@ function App() {
               <button
                 type="button"
                 className={correlation === 'all' ? 'active' : ''}
+                aria-pressed={correlation === 'all'}
                 onClick={() => setCorrelation('all')}
               >
                 <span>All traces</span>
@@ -287,6 +289,7 @@ function App() {
                 <button
                   type="button"
                   className={correlation === id ? 'active' : ''}
+                  aria-pressed={correlation === id}
                   key={id}
                   onClick={() => setCorrelation(id)}
                 >
@@ -345,7 +348,7 @@ function App() {
                     `${new Date(firstTime).toLocaleTimeString()} — ${new Date(lastTime).toLocaleTimeString()}`}
                 </span>
               </div>
-              <div className="timeline" aria-label="Event distribution over time">
+              <div className="timeline" role="img" aria-label="Event distribution over time">
                 {timeline.map((bucket, index) => (
                   <span
                     className="timeline-column"
@@ -372,7 +375,7 @@ function App() {
             </div>
 
             <div className="event-layout">
-              <div className="event-list" role="list">
+              <div className="event-list">
                 {filtered.length === 0 ? (
                   <div className="no-results">
                     <strong>No events match this view.</strong>
@@ -392,7 +395,6 @@ function App() {
                   filtered.map((event) => (
                     <button
                       type="button"
-                      role="listitem"
                       className={`event-row ${selected?.id === event.id ? 'selected' : ''}`}
                       key={event.id}
                       onClick={() => setSelectedId(event.id)}

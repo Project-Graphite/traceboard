@@ -459,12 +459,12 @@ kbd {
 .level-filters button {
   grid-template-columns: 12px 1fr auto;
   gap: 7px;
-  opacity: 0.48;
+  color: var(--faint);
 }
 
 .level-filters button.active {
   background: var(--selection);
-  opacity: 1;
+  color: var(--ink);
 }
 
 .filter-count {
@@ -534,7 +534,6 @@ kbd {
 .search-wrap input {
   width: 100%;
   border: 0;
-  outline: 0;
   background: transparent;
   color: var(--ink);
 }
@@ -684,7 +683,7 @@ kbd {
   border-radius: 2px;
   padding: 2px 5px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: 10px;
   line-height: 1.15;
   text-transform: uppercase;
 }
@@ -806,6 +805,8 @@ kbd {
   border: 1px solid var(--line);
   background: var(--surface-strong);
   box-shadow: 0 34px 100px rgb(0 0 0 / 30%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
   padding: 28px;
 }
 
@@ -849,12 +850,17 @@ kbd {
   border-color: var(--accent);
 }
 
+.drop-target:has(:focus-visible) {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
 .drop-target input {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
 }
 
 .drop-target strong {
@@ -903,15 +909,7 @@ kbd {
   color: var(--faint);
 }
 
-@media (max-width: 1050px) {
-  .welcome {
-    grid-template-columns: 1fr;
-  }
-
-  .welcome-preview {
-    width: min(680px, 100%);
-  }
-
+@media (max-width: 1180px) {
   .event-layout {
     grid-template-columns: 1fr;
   }
@@ -923,6 +921,16 @@ kbd {
 
   .inspector {
     max-height: 420px;
+  }
+}
+
+@media (max-width: 1050px) {
+  .welcome {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-preview {
+    width: min(680px, 100%);
   }
 }
 
@@ -960,7 +968,8 @@ kbd {
   }
 
   .rail {
-    display: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .board {
