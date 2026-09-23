@@ -66,18 +66,20 @@ function textFor(record: Record<string, unknown>, keys: string[], fallback: stri
 }
 
 function normalizeLevel(value: unknown): LogLevel {
-  const normalized = String(value ?? 'unknown').toLowerCase();
+  if (typeof value === 'number') return levels[value / 10 - 1] ?? 'unknown';
+  const normalized = String(value).toLowerCase();
   if (normalized === 'warning') return 'warn';
   if (['critical', 'panic', 'emerg', 'alert'].includes(normalized)) return 'fatal';
-  if (['err', 'severe'].includes(normalized)) return 'error';
+  if (['err', 'severe', 'stderr'].includes(normalized)) return 'error';
   if (['log', 'notice', 'stdout'].includes(normalized)) return 'info';
-  if (normalized === 'stderr') return 'error';
+  if (normalized === 'verbose') return 'trace';
   return levels.includes(normalized as LogLevel) ? (normalized as LogLevel) : 'unknown';
 }
 
 function parseTimestamp(value: unknown) {
-  if (typeof value !== 'string' && typeof value !== 'number') return null;
-  const date = new Date(value);
+  if (typeof value === 'string') return timestampFor(value);
+  if (typeof value !== 'number') return null;
+  const date = new Date(value < 1e11 ? value * 1000 : value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -100,8 +102,8 @@ function normalizeRecord(record: Record<string, unknown>, line: number): LogEven
     timestamp,
     timestampLabel: timestamp ? timestamp.toISOString() : 'time unknown',
     level: normalizeLevel(nestedValueFor(record, levelKeys)),
-    service: textFor(record, serviceKeys, wrapped?.[0] ?? 'unknown service'),
-    message: textFor(record, messageKeys, name || (wrapped ? `Structured ${wrapped[0]}` : 'Structured event')),
+    service: textFor(content, serviceKeys, wrapped?.[0] ?? 'unknown service'),
+    message: textFor(content, messageKeys, name || (wrapped ? `Structured ${wrapped[0]}` : 'Structured event')),
     correlation:
       typeof correlationValue === 'string' || typeof correlationValue === 'number'
         ? String(correlationValue)
@@ -174,7 +176,7 @@ function textEvent(source: string, line: number): LogEvent {
   const stackFrame = text.match(/^\s*at\s+([\w.]+)/);
   const standaloneException = text.match(/^([\w.]+(?:Error|Exception)):\s*(.*)$/);
   const nest = text.match(
-    /^\[Nest\]\s+\d+\s+-\s+(.+?)\s+(LOG|ERROR|WARN|DEBUG|VERBOSE)\s+\[([^\]]+)\]\s*(?:\[([^\]]+)\]\s*)?(.*?)(?:\s+\+\d+ms)?$/i,
+    /^\[Nest\]\s+\d+\s+-\s+(.+?)\s+(LOG|ERROR|WARN|DEBUG|VERBOSE|FATAL)\s+\[([^\]]+)\]\s*(?:\[([^\]]+)\]\s*)?(.*?)(?:\s+\+\d+ms)?$/i,
   );
   if (stackFrame) {
     level = 'error';
@@ -280,7 +282,7 @@ function textEvent(source: string, line: number): LogEvent {
       message = iso[4];
     } else if (redis) {
       timestamp = timestampFor(redis[1]);
-      level = redis[2] === '#' ? 'warn' : redis[2] === '-' ? 'debug' : 'info';
+      level = redis[2] === '#' ? 'warn' : redis[2] === '*' ? 'info' : 'debug';
       service = service === 'unknown service' ? 'redis' : service;
       message = redis[3];
     }
@@ -330,7 +332,7 @@ export function parseLogs(source: string): ParseResult {
   }
 
   const events: LogEvent[] = [];
-  for (const [index, line] of trimmed.split(/\r?\n/).entries()) {
+  for (const [index, line] of source.split(/\r?\n/).entries()) {
     const cleaned = cleanLine(line);
     if (!cleaned.trim()) continue;
     const content = cleaned.replace(/^[\w][\w.-]*\s+\|\s?/, '');
@@ -371,16 +373,16 @@ export const sampleLogs = [
   'api-1 | [Nest] 24 - 09/17/2026, 09:42:11 AM LOG [RequestHandler][req-a72f] Request accepted +2ms',
   'worker-1 | 2026-09-17 09:42:11,132 - [INFO] - [12] - [MainThread] - jobs.index - Processing started requestId=req-a72f',
   JSON.stringify({
-    timestamp: '2026-09-17T06:42:11.208Z',
+    timestamp: '2026-09-17T09:42:11.208',
     level: 'info',
     service: 'search',
     message: 'Query completed',
     traceId: 'req-a72f',
     duration_ms: 76,
   }),
-  'vector-1 | 2026-09-17T06:42:11.301Z INFO storage: persisted 24 vectors trace_id=req-a72f',
-  'postgres-1 | 2026-09-17 06:42:11.461 UTC [74] WARNING: checkpoint exceeded target duration',
+  'vector-1 | 2026-09-17T09:42:11.301 INFO storage: persisted 24 vectors trace_id=req-a72f',
+  'postgres-1 | 2026-09-17 09:42:11.461 [74] WARNING: checkpoint exceeded target duration',
   'api-1 | [Nest] 24 - 09/17/2026, 09:42:11 AM ERROR [RequestHandler][req-b19c] Request failed +18ms',
-  '[2026-09-17 09:42:11 +0300] [31] [ERROR] Worker exited unexpectedly request_id=req-b19c',
+  '[2026-09-17 09:42:11] [31] [ERROR] Worker exited unexpectedly request_id=req-b19c',
   'redis-1 | 1:M 17 Sep 2026 09:42:15.782 * Ready to accept connections',
 ].join('\n');
