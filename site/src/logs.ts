@@ -3,10 +3,8 @@ export const levels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'unkn
 export type LogLevel = (typeof levels)[number];
 
 export interface LogEvent {
-  id: string;
   line: number;
   timestamp: Date | null;
-  timestampLabel: string;
   level: LogLevel;
   service: string;
   message: string;
@@ -14,7 +12,7 @@ export interface LogEvent {
   raw: Record<string, unknown>;
 }
 
-export interface ParseResult {
+interface ParseResult {
   events: LogEvent[];
   rejected: number;
 }
@@ -41,6 +39,8 @@ const correlationKeys = [
   'trace_id',
 ];
 const recordCollectionKeys = ['events', 'logs', 'records', 'logEvents', 'items'];
+const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g');
+const containerPrefix = /^(\w[\w.-]*)\s+\|\s?/;
 
 function valueFor(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
@@ -90,17 +90,14 @@ function normalizeRecord(record: Record<string, unknown>, line: number): LogEven
       ? ([entries[0][0], entries[0][1]] as const)
       : null;
   const content = wrapped ? wrapped[1] : record;
-  const timestampValue = nestedValueFor(record, timestampKeys);
-  const timestamp = parseTimestamp(timestampValue);
+  const timestamp = parseTimestamp(nestedValueFor(record, timestampKeys));
   const correlationValue =
     nestedValueFor(record, correlationKeys) ??
     (wrapped ? valueFor(content, [`${wrapped[0]}Id`, 'id']) : valueFor(record, ['id']));
   const name = textFor(content, ['name', 'title'], '');
   return {
-    id: `${line}-${JSON.stringify(record).slice(0, 48)}`,
     line,
     timestamp,
-    timestampLabel: timestamp ? timestamp.toISOString() : 'time unknown',
     level: normalizeLevel(nestedValueFor(record, levelKeys)),
     service: textFor(content, serviceKeys, wrapped?.[0] ?? 'unknown service'),
     message: textFor(content, messageKeys, name || (wrapped ? `Structured ${wrapped[0]}` : 'Structured event')),
@@ -143,26 +140,23 @@ function timestampFor(value: string) {
 
 function cleanLine(source: string) {
   return source
-    .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g'), '')
+    .replace(ansiEscape, '')
     .replace(/^│\s?/, '')
     .replace(/\s*│$/, '')
     .replace(/\[([A-Za-z][\w.-]*)\[\]/g, '[$1]')
     .trimEnd();
 }
 
-function textEvent(source: string, line: number): LogEvent {
-  const original = cleanLine(source);
+function textEvent(original: string, line: number): LogEvent {
   let text = original;
-  let service = 'unknown service';
+  let service: string | undefined;
   let timestamp: Date | null = null;
   let level: LogLevel = 'unknown';
-  let message = text;
 
-  const container = text.match(/^([\w][\w.-]*)\s+\|\s?(.*)$/);
+  const container = text.match(containerPrefix);
   if (container) {
     service = container[1];
-    text = container[2];
-    message = text;
+    text = text.slice(container[0].length);
   }
 
   const cri = text.match(/^(\d{4}-\d\d-\d\dT\S+)\s+(stdout|stderr)\s+[FP]\s+(.*)$/i);
@@ -170,9 +164,9 @@ function textEvent(source: string, line: number): LogEvent {
     timestamp = timestampFor(cri[1]);
     level = normalizeLevel(cri[2]);
     text = cri[3];
-    message = text;
   }
 
+  let message = text;
   const stackFrame = text.match(/^\s*at\s+([\w.]+)/);
   const standaloneException = text.match(/^([\w.]+(?:Error|Exception)):\s*(.*)$/);
   const nest = text.match(
@@ -180,16 +174,16 @@ function textEvent(source: string, line: number): LogEvent {
   );
   if (stackFrame) {
     level = 'error';
-    service = service === 'unknown service' ? stackFrame[1].split('.')[0] : service;
+    service ??= stackFrame[1].split('.')[0];
     message = text.trim();
   } else if (standaloneException) {
     level = 'error';
-    service = service === 'unknown service' ? 'runtime' : service;
+    service ??= 'runtime';
     message = `${standaloneException[1]}: ${standaloneException[2]}`;
   } else if (nest) {
     timestamp = timestampFor(nest[1]);
     level = normalizeLevel(nest[2]);
-    service = service === 'unknown service' ? nest[3] : service;
+    service ??= nest[3];
     message = nest[5];
   } else {
     const python = text.match(
@@ -227,79 +221,91 @@ function textEvent(source: string, line: number): LogEvent {
     if (python) {
       timestamp = timestampFor(python[1]);
       level = normalizeLevel(python[2]);
-      service = service === 'unknown service' ? python[3] : service;
+      service ??= python[3];
       message = python[4];
     } else if (pythonStandard) {
       timestamp = timestampFor(pythonStandard[1]);
-      service = service === 'unknown service' ? pythonStandard[2] : service;
+      service ??= pythonStandard[2];
       level = normalizeLevel(pythonStandard[3]);
       message = pythonStandard[4];
     } else if (pythonIso) {
       timestamp = timestampFor(pythonIso[1]);
       level = normalizeLevel(pythonIso[2]);
-      service = service === 'unknown service' ? pythonIso[3] : service;
+      service ??= pythonIso[3];
       message = pythonIso[4];
     } else if (pythonBracketed) {
       timestamp = timestampFor(pythonBracketed[1]);
       level = normalizeLevel(pythonBracketed[2]);
-      service = service === 'unknown service' ? pythonBracketed[3] : service;
+      service ??= pythonBracketed[3];
       message = pythonBracketed[4];
     } else if (pythonWarning) {
       level = 'warn';
-      service = service === 'unknown service' ? pythonWarning[1].split('/').at(-1)! : service;
+      service ??= pythonWarning[1].split('/').at(-1)!;
       message = `${pythonWarning[2]}: ${pythonWarning[3]}`;
     } else if (celery || gunicorn) {
       const match = celery ?? gunicorn!;
       timestamp = timestampFor(match[1]);
       level = normalizeLevel(match[2]);
-      service = service === 'unknown service' ? (celery ? 'worker' : 'web') : service;
+      service ??= celery ? 'worker' : 'web';
       message = match[3];
     } else if (httpAccess) {
       timestamp = timestampFor(httpAccess[1]);
       const status = Number(httpAccess[4]);
       level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-      service = service === 'unknown service' ? 'http' : service;
+      service ??= 'http';
       message = `${httpAccess[2].toUpperCase()} ${httpAccess[3]} → ${status} ${httpAccess[5]}`;
     } else if (workerNotice) {
       timestamp = timestampFor(workerNotice[1]);
       level = 'info';
-      service = service === 'unknown service' ? 'worker' : service;
+      service ??= 'worker';
       message = `${workerNotice[2]} ${workerNotice[3]}`;
     } else if (postgres) {
       timestamp = timestampFor(postgres[1]);
       level = normalizeLevel(postgres[2]);
-      service = service === 'unknown service' ? 'postgres' : service;
+      service ??= 'postgres';
       message = postgres[3];
     } else if (bracketed) {
       timestamp = timestampFor(bracketed[1]);
       level = normalizeLevel(bracketed[2]);
-      service = service === 'unknown service' ? bracketed[3] : service;
+      service ??= bracketed[3];
       message = bracketed[4];
     } else if (iso) {
       timestamp = timestampFor(iso[1]);
       level = normalizeLevel(iso[2]);
-      service = service === 'unknown service' ? iso[3].trim() : service;
+      service ??= iso[3].trim();
       message = iso[4];
     } else if (redis) {
       timestamp = timestampFor(redis[1]);
       level = redis[2] === '#' ? 'warn' : redis[2] === '*' ? 'info' : 'debug';
-      service = service === 'unknown service' ? 'redis' : service;
+      service ??= 'redis';
       message = redis[3];
     }
   }
 
   const correlation = nest?.[4] ?? correlationFor(message);
   return {
-    id: `${line}-${original.slice(0, 48)}`,
     line,
     timestamp,
-    timestampLabel: timestamp ? timestamp.toISOString() : 'time unknown',
     level,
-    service,
+    service: service ?? 'unknown service',
     message: message || 'Log event',
     correlation,
     raw: { original },
   };
+}
+
+function sortedByTime(events: LogEvent[]) {
+  return events.every((event) => event.timestamp)
+    ? events.sort((a, b) => a.timestamp!.getTime() - b.timestamp!.getTime())
+    : events;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeValues(values: unknown[]) {
@@ -307,9 +313,7 @@ function normalizeValues(values: unknown[]) {
     .map((value, index) => (isRecord(value) ? normalizeRecord(value, index + 1) : null))
     .filter((event): event is LogEvent => event !== null);
   return {
-    events: events.every((event) => event.timestamp)
-      ? events.sort((a, b) => a.timestamp!.getTime() - b.timestamp!.getTime())
-      : events,
+    events: sortedByTime(events),
     rejected: values.length - events.length,
   };
 }
@@ -318,24 +322,21 @@ export function parseLogs(source: string): ParseResult {
   const trimmed = source.trim();
   if (!trimmed) return { events: [], rejected: 0 };
 
-  try {
-    const value: unknown = JSON.parse(trimmed);
-    if (isRecord(value)) {
-      for (const key of recordCollectionKeys) {
-        if (Array.isArray(value[key])) return normalizeValues(value[key]);
-      }
-      return { events: [normalizeRecord(value, 1)], rejected: 0 };
+  const json = parseJson(trimmed);
+  if (isRecord(json)) {
+    for (const key of recordCollectionKeys) {
+      if (Array.isArray(json[key])) return normalizeValues(json[key]);
     }
-    if (Array.isArray(value)) return normalizeValues(value);
-    return { events: [], rejected: 1 };
-  } catch {
+    return { events: [normalizeRecord(json, 1)], rejected: 0 };
   }
+  if (Array.isArray(json)) return normalizeValues(json);
+  if (json !== undefined) return { events: [], rejected: 1 };
 
   const events: LogEvent[] = [];
   for (const [index, line] of source.split(/\r?\n/).entries()) {
     const cleaned = cleanLine(line);
     if (!cleaned.trim()) continue;
-    const content = cleaned.replace(/^[\w][\w.-]*\s+\|\s?/, '');
+    const content = cleaned.replace(containerPrefix, '');
     const previous = events.at(-1);
     const previousOriginal = previous?.raw.original;
     if (
@@ -344,29 +345,18 @@ export function parseLogs(source: string): ParseResult {
       (/^\s+/.test(content) ||
         /^(Traceback \(most recent call last\):|Caused by:|During handling|DETAIL:|HINT:|CONTEXT:|STATEMENT:|[\w.]+(?:Error|Exception):)/.test(
           content,
-        ) ||
-        (previousOriginal.includes('Traceback (most recent call last):') &&
-          /^[\w.]+(?:Error|Exception):/.test(content)))
+        ))
     ) {
       previous.raw = { original: `${previousOriginal}\n${cleaned}` };
       continue;
     }
-    try {
-      const value: unknown = JSON.parse(cleaned);
-      events.push(
-        isRecord(value) ? normalizeRecord(value, index + 1) : textEvent(cleaned, index + 1),
-      );
-    } catch {
-      events.push(textEvent(cleaned, index + 1));
-    }
+    const value = parseJson(cleaned);
+    events.push(
+      isRecord(value) ? normalizeRecord(value, index + 1) : textEvent(cleaned, index + 1),
+    );
   }
 
-  return {
-    events: events.every((event) => event.timestamp)
-      ? events.sort((a, b) => a.timestamp!.getTime() - b.timestamp!.getTime())
-      : events,
-    rejected: 0,
-  };
+  return { events: sortedByTime(events), rejected: 0 };
 }
 
 export const sampleLogs = [

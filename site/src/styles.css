@@ -619,7 +619,7 @@ kbd {
 
 .stream-tools {
   min-height: 58px;
-  justify-content: space-between;
+  justify-content: flex-end;
   color: var(--faint);
 }
 
@@ -1011,14 +1011,6 @@ kbd {
 
   .event-correlation {
     grid-column: 3;
-  }
-
-  .stream-tools > span {
-    display: none;
-  }
-
-  .stream-tools {
-    justify-content: flex-end;
   }
 
   .dialog-footer {

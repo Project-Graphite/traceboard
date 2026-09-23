@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { levels, parseLogs, sampleLogs, type LogEvent, type LogLevel } from './logs';
 
-const activeLevels = [...levels];
 type Theme = 'system' | 'light' | 'dark';
+
+const timeFormat = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  fractionalSecondDigits: 3,
+  hour12: false,
+});
 
 function formatTime(event: LogEvent) {
   if (!event.timestamp) return `line ${event.line}`;
-  return new Intl.DateTimeFormat(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    fractionalSecondDigits: 3,
-    hour12: false,
-  }).format(event.timestamp);
+  return timeFormat.format(event.timestamp);
 }
 
 function formatSpan(milliseconds: number) {
@@ -27,6 +28,10 @@ function formatRaw(event: LogEvent) {
     : JSON.stringify(event.raw, null, 2);
 }
 
+function isSevere(level: LogLevel) {
+  return level === 'error' || level === 'fatal';
+}
+
 function buildTimeline(events: LogEvent[], start: number, end: number, buckets = 28) {
   const output = Array.from({ length: buckets }, () => ({ total: 0, severe: 0 }));
   const width = Math.max(1, end - start);
@@ -37,7 +42,7 @@ function buildTimeline(events: LogEvent[], start: number, end: number, buckets =
       Math.floor(((event.timestamp.getTime() - start) / width) * buckets),
     );
     output[index].total += 1;
-    if (event.level === 'error' || event.level === 'fatal') output[index].severe += 1;
+    if (isSevere(event.level)) output[index].severe += 1;
   }
   return output;
 }
@@ -54,15 +59,14 @@ function App() {
   const [query, setQuery] = useState('');
   const [service, setService] = useState('all');
   const [correlation, setCorrelation] = useState('all');
-  const [enabledLevels, setEnabledLevels] = useState<LogLevel[]>([...activeLevels]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [enabledLevels, setEnabledLevels] = useState<LogLevel[]>([...levels]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('traceboard-theme');
     return saved === 'light' || saved === 'dark' ? saved : 'system';
   });
   const searchRef = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const parsed = useMemo(() => parseLogs(source), [source]);
   const services = useMemo(
     () => [...new Set(parsed.events.map((event) => event.service))].sort(),
@@ -85,7 +89,7 @@ function App() {
         (!needle || formatRaw(event).toLowerCase().includes(needle)),
     );
   }, [correlation, enabledLevels, parsed.events, query, service]);
-  const selected = filtered.find((event) => event.id === selectedId) ?? filtered[0] ?? null;
+  const selected = filtered.find((event) => event.line === selectedId) ?? filtered[0] ?? null;
   const [firstTime, lastTime] = useMemo(
     () =>
       parsed.events.reduce(
@@ -138,13 +142,17 @@ function App() {
     return () => window.removeEventListener('keydown', focusSearch);
   }, []);
 
-  function load(nextSource: string) {
-    setSource(nextSource);
-    setDraft('');
+  function resetFilters() {
     setQuery('');
     setService('all');
     setCorrelation('all');
-    setEnabledLevels([...activeLevels]);
+    setEnabledLevels([...levels]);
+  }
+
+  function load(nextSource: string) {
+    setSource(nextSource);
+    setDraft('');
+    resetFilters();
     setSelectedId(null);
     setImportOpen(false);
   }
@@ -152,7 +160,6 @@ function App() {
   async function importFile(file: File | undefined) {
     if (!file) return;
     load(await file.text());
-    if (fileRef.current) fileRef.current.value = '';
   }
 
   function toggleLevel(level: LogLevel) {
@@ -255,7 +262,7 @@ function App() {
             <div className="rail-section">
               <p className="rail-label">levels</p>
               <div className="level-filters">
-                {activeLevels.map((level) => {
+                {levels.map((level) => {
                   const count = parsed.events.filter((event) => event.level === level).length;
                   return (
                     <button
@@ -331,7 +338,7 @@ function App() {
               <div>
                 <span>errors</span>
                 <strong>
-                  {parsed.events.filter((event) => ['error', 'fatal'].includes(event.level)).length}
+                  {parsed.events.filter((event) => isSevere(event.level)).length}
                 </strong>
               </div>
               <div>
@@ -362,7 +369,6 @@ function App() {
             </section>
 
             <div className="stream-tools">
-              <span>{filtered.length} matching events</span>
               <label>
                 service
                 <select value={service} onChange={(event) => setService(event.target.value)}>
@@ -379,15 +385,7 @@ function App() {
                 {filtered.length === 0 ? (
                   <div className="no-results">
                     <strong>No events match this view.</strong>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQuery('');
-                        setService('all');
-                        setCorrelation('all');
-                        setEnabledLevels([...activeLevels]);
-                      }}
-                    >
+                    <button type="button" onClick={resetFilters}>
                       Reset filters
                     </button>
                   </div>
@@ -395,9 +393,9 @@ function App() {
                   filtered.map((event) => (
                     <button
                       type="button"
-                      className={`event-row ${selected?.id === event.id ? 'selected' : ''}`}
-                      key={event.id}
-                      onClick={() => setSelectedId(event.id)}
+                      className={`event-row ${selected?.line === event.line ? 'selected' : ''}`}
+                      key={event.line}
+                      onClick={() => setSelectedId(event.line)}
                     >
                       <span className={`level-pill level-${event.level}`}>{event.level}</span>
                       <time>{formatTime(event)}</time>
@@ -482,7 +480,6 @@ function App() {
               }}
             >
               <input
-                ref={fileRef}
                 type="file"
                 accept=".json,.jsonl,.ndjson,.log,.txt,application/json,text/plain"
                 onChange={(event) => importFile(event.target.files?.[0])}
