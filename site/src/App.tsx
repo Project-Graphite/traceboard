@@ -170,12 +170,9 @@ function App() {
       {parsed.events.length === 0 ? (
         <main className="welcome" inert={importOpen}>
           <section className="welcome-copy">
-            <p className="eyebrow">local incident workspace</p>
-            <h1>Find the event that changed everything.</h1>
+            <h1>Explore logs in your browser.</h1>
             <p className="lede">
-              Traceboard brings application, worker, container, and database logs into one
-              inspectable timeline. Filter a service, follow a request, and keep every byte on your
-              machine.
+              Import plain-text, JSON or JSONL logs and filter them by level, service or request ID.
             </p>
             <div className="welcome-actions">
               <button className="primary-button" type="button" onClick={() => setImportOpen(true)}>
@@ -435,7 +432,7 @@ function App() {
             <div className="dialog-heading">
               <div>
                 <p className="eyebrow">new dataset</p>
-                <h2 id="import-title">Bring your logs into focus.</h2>
+                <h2 id="import-title">Import logs</h2>
               </div>
               <button type="button" onClick={() => setImportOpen(false)} aria-label="Close import dialog">
                 ×
