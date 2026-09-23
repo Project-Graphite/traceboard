@@ -27,17 +27,14 @@ function formatRaw(event: LogEvent) {
     : JSON.stringify(event.raw, null, 2);
 }
 
-function buildTimeline(events: LogEvent[], buckets = 28) {
-  const dated = events.filter((event) => event.timestamp);
-  if (dated.length === 0) return Array.from({ length: buckets }, () => ({ total: 0, severe: 0 }));
-  const start = dated[0].timestamp!.getTime();
-  const end = dated[dated.length - 1].timestamp!.getTime();
-  const width = Math.max(1, end - start);
+function buildTimeline(events: LogEvent[], start: number, end: number, buckets = 28) {
   const output = Array.from({ length: buckets }, () => ({ total: 0, severe: 0 }));
-  for (const event of dated) {
+  const width = Math.max(1, end - start);
+  for (const event of events) {
+    if (!event.timestamp) continue;
     const index = Math.min(
       buckets - 1,
-      Math.floor(((event.timestamp!.getTime() - start) / width) * buckets),
+      Math.floor(((event.timestamp.getTime() - start) / width) * buckets),
     );
     output[index].total += 1;
     if (event.level === 'error' || event.level === 'fatal') output[index].severe += 1;
@@ -46,7 +43,13 @@ function buildTimeline(events: LogEvent[], buckets = 28) {
 }
 
 function App() {
-  const [source, setSource] = useState(() => localStorage.getItem('traceboard-source') ?? '');
+  const [source, setSource] = useState(() => {
+    try {
+      return localStorage.getItem('traceboard-source') ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState('');
   const [service, setService] = useState('all');
@@ -79,24 +82,35 @@ function App() {
         enabledLevels.includes(event.level) &&
         (service === 'all' || event.service === service) &&
         (correlation === 'all' || event.correlation === correlation) &&
-        (!needle || JSON.stringify(event.raw).toLowerCase().includes(needle)),
+        (!needle || formatRaw(event).toLowerCase().includes(needle)),
     );
   }, [correlation, enabledLevels, parsed.events, query, service]);
   const selected = filtered.find((event) => event.id === selectedId) ?? filtered[0] ?? null;
-  const timeline = useMemo(() => buildTimeline(filtered), [filtered]);
+  const [firstTime, lastTime] = useMemo(
+    () =>
+      parsed.events.reduce(
+        ([min, max], event) => {
+          const time = event.timestamp?.getTime();
+          return time === undefined ? [min, max] : [Math.min(min, time), Math.max(max, time)];
+        },
+        [Infinity, -Infinity],
+      ),
+    [parsed.events],
+  );
+  const span = Number.isFinite(firstTime) ? lastTime - firstTime : 0;
+  const timeline = useMemo(
+    () => buildTimeline(filtered, firstTime, lastTime),
+    [filtered, firstTime, lastTime],
+  );
   const timelineMaximum = Math.max(1, ...timeline.map((bucket) => bucket.total));
-  const [firstTimestamp, lastTimestamp] = useMemo(() => {
-    const timestamps = parsed.events.flatMap((event) =>
-      event.timestamp ? [event.timestamp.getTime()] : [],
-    );
-    return timestamps.length
-      ? [new Date(Math.min(...timestamps)), new Date(Math.max(...timestamps))]
-      : [undefined, undefined];
-  }, [parsed.events]);
-  const span = firstTimestamp && lastTimestamp ? lastTimestamp.getTime() - firstTimestamp.getTime() : 0;
 
   useEffect(() => {
-    localStorage.setItem('traceboard-source', source);
+    try {
+      localStorage.removeItem('traceboard-source');
+      localStorage.setItem('traceboard-source', source);
+    } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
   }, [source]);
 
   useEffect(() => {
@@ -111,7 +125,10 @@ function App() {
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
-      if (event.key === '/' && document.activeElement?.tagName !== 'TEXTAREA') {
+      if (
+        event.key === '/' &&
+        !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+      ) {
         event.preventDefault();
         searchRef.current?.focus();
       }
@@ -191,7 +208,7 @@ function App() {
                 Explore sample data →
               </button>
             </div>
-            {source && parsed.rejected > 0 && (
+            {source.trim() && (
               <p className="parse-error">No events found in this input.</p>
             )}
           </section>
@@ -323,7 +340,10 @@ function App() {
             <section className="timeline-panel">
               <div className="panel-heading">
                 <span>event distribution</span>
-                <span>{firstTimestamp?.toLocaleTimeString()} — {lastTimestamp?.toLocaleTimeString()}</span>
+                <span>
+                  {Number.isFinite(firstTime) &&
+                    `${new Date(firstTime).toLocaleTimeString()} — ${new Date(lastTime).toLocaleTimeString()}`}
+                </span>
               </div>
               <div className="timeline" aria-label="Event distribution over time">
                 {timeline.map((bucket, index) => (
