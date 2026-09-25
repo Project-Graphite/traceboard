@@ -83,7 +83,11 @@ function parseTimestamp(value: unknown) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function normalizeRecord(record: Record<string, unknown>, line: number): LogEvent {
+function normalizeRecord(
+  record: Record<string, unknown>,
+  line: number,
+  fallbackService = 'unknown service',
+): LogEvent {
   const entries = Object.entries(record);
   const wrapped =
     entries.length === 1 && isRecord(entries[0][1])
@@ -99,7 +103,7 @@ function normalizeRecord(record: Record<string, unknown>, line: number): LogEven
     line,
     timestamp,
     level: normalizeLevel(nestedValueFor(record, levelKeys)),
-    service: textFor(content, serviceKeys, wrapped?.[0] ?? 'unknown service'),
+    service: textFor(content, serviceKeys, wrapped?.[0] ?? fallbackService),
     message: textFor(content, messageKeys, name || (wrapped ? `Structured ${wrapped[0]}` : 'Structured event')),
     correlation:
       typeof correlationValue === 'string' || typeof correlationValue === 'number'
@@ -336,7 +340,8 @@ export function parseLogs(source: string): ParseResult {
   for (const [index, line] of source.split(/\r?\n/).entries()) {
     const cleaned = cleanLine(line);
     if (!cleaned.trim()) continue;
-    const content = cleaned.replace(containerPrefix, '');
+    const container = cleaned.match(containerPrefix);
+    const content = container ? cleaned.slice(container[0].length) : cleaned;
     const previous = events.at(-1);
     const previousOriginal = previous?.raw.original;
     if (
@@ -350,9 +355,11 @@ export function parseLogs(source: string): ParseResult {
       previous.raw = { original: `${previousOriginal}\n${cleaned}` };
       continue;
     }
-    const value = parseJson(cleaned);
+    const value = parseJson(content);
     events.push(
-      isRecord(value) ? normalizeRecord(value, index + 1) : textEvent(cleaned, index + 1),
+      isRecord(value)
+        ? normalizeRecord(value, index + 1, container?.[1])
+        : textEvent(cleaned, index + 1),
     );
   }
 
