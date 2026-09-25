@@ -9,6 +9,8 @@ const timeFormat = new Intl.DateTimeFormat(undefined, {
   hour12: false,
 });
 
+const rowBatch = 500;
+
 function formatTime(event: LogEvent) {
   if (!event.timestamp) return `line ${event.line}`;
   return timeFormat.format(event.timestamp);
@@ -59,6 +61,7 @@ function App() {
   const [correlation, setCorrelation] = useState('all');
   const [enabledLevels, setEnabledLevels] = useState<LogLevel[]>([...levels]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [rowLimit, setRowLimit] = useState(rowBatch);
   const [importOpen, setImportOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const parsed = useMemo(() => parseLogs(source), [source]);
@@ -138,6 +141,7 @@ function App() {
     setDraft('');
     resetFilters();
     setSelectedId(null);
+    setRowLimit(rowBatch);
     setImportOpen(false);
   }
 
@@ -357,20 +361,31 @@ function App() {
                     </button>
                   </div>
                 ) : (
-                  filtered.map((event) => (
-                    <button
-                      type="button"
-                      className={`event-row ${selected?.line === event.line ? 'selected' : ''}`}
-                      key={event.line}
-                      onClick={() => setSelectedId(event.line)}
-                    >
-                      <span className={`level-pill level-${event.level}`}>{event.level}</span>
-                      <time>{formatTime(event)}</time>
-                      <span className="event-service">{event.service}</span>
-                      <span className="event-message">{event.message}</span>
-                      <span className="event-correlation">{event.correlation ?? '—'}</span>
-                    </button>
-                  ))
+                  <>
+                    {filtered.slice(0, rowLimit).map((event) => (
+                      <button
+                        type="button"
+                        className={`event-row ${selected?.line === event.line ? 'selected' : ''}`}
+                        key={event.line}
+                        onClick={() => setSelectedId(event.line)}
+                      >
+                        <span className={`level-pill level-${event.level}`}>{event.level}</span>
+                        <time>{formatTime(event)}</time>
+                        <span className="event-service">{event.service}</span>
+                        <span className="event-message">{event.message}</span>
+                        <span className="event-correlation">{event.correlation ?? '—'}</span>
+                      </button>
+                    ))}
+                    {filtered.length > rowLimit && (
+                      <button
+                        type="button"
+                        className="show-more"
+                        onClick={() => setRowLimit((limit) => limit + rowBatch)}
+                      >
+                        Show more · {(filtered.length - rowLimit).toLocaleString()} not shown
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
 
