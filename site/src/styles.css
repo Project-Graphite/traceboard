@@ -614,6 +614,11 @@ kbd {
   white-space: nowrap;
 }
 
+.event-row:is(:hover, .selected) :is(time, .event-service, .event-correlation, .level-debug, .level-trace),
+.level-filters button.active .filter-count {
+  color: var(--muted);
+}
+
 .event-message {
   overflow: hidden;
   font-size: 12px;
