@@ -366,6 +366,7 @@ function App() {
                       <button
                         type="button"
                         className={`event-row ${selected?.line === event.line ? 'selected' : ''}`}
+                        aria-current={selected?.line === event.line}
                         key={event.line}
                         onClick={() => setSelectedId(event.line)}
                       >
